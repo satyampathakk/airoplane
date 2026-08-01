@@ -12,7 +12,8 @@
         {
           "motionPermission": "Allow $(PRODUCT_NAME) to access your device motion"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "ios": {
       "supportsTabletMode": true,
