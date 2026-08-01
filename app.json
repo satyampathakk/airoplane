@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ESP32 Drone Controller",
-    "slug": "esp32-drone-controller",
+    "slug": "airoplane",
     "version": "1.0.0",
     "assetBundlePatterns": [
       "**/*"
@@ -27,8 +27,7 @@
       },
       "permissions": [
         "android.permission.INTERNET",
-        "android.permission.ACCESS_NETWORK_STATE",
-        "HIGH_SAMPLING_RATE_SENSORS"
+        "android.permission.ACCESS_NETWORK_STATE"
       ],
       "package": "com.esp32.dronecontroller"
     },
@@ -37,6 +36,12 @@
     },
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#0a0e27"
+    "backgroundColor": "#0a0e27",
+    "extra": {
+      "eas": {
+        "projectId": "232a18aa-b1df-45cb-afb6-262da5fc40c7"
+      }
+    },
+    "owner": "satyampathakk"
   }
 }

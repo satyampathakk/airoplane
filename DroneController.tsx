@@ -152,17 +152,17 @@ const SliderControl: React.FC<SliderControlProps> = ({
           styles.sliderThumb,
           orientation === 'vertical'
             ? {
-                top: `${100 - percent}%`,
-                left: '50%',
-                marginLeft: -SLIDER_THUMB_SIZE / 2,
-                marginTop: -SLIDER_THUMB_SIZE / 2,
-              }
+              top: `${100 - percent}%`,
+              left: '50%',
+              marginLeft: -SLIDER_THUMB_SIZE / 2,
+              marginTop: -SLIDER_THUMB_SIZE / 2,
+            }
             : {
-                left: `${percent}%`,
-                top: '50%',
-                marginLeft: -SLIDER_THUMB_SIZE / 2,
-                marginTop: -SLIDER_THUMB_SIZE / 2,
-              },
+              left: `${percent}%`,
+              top: '50%',
+              marginLeft: -SLIDER_THUMB_SIZE / 2,
+              marginTop: -SLIDER_THUMB_SIZE / 2,
+            },
         ]}
       />
     </View>
@@ -300,27 +300,34 @@ const DroneController: React.FC = () => {
   const returnListener = useRef<string | null>(null);
   const armedPulse = useRef(new Animated.Value(0)).current;
   const toastAnim = useRef(new Animated.Value(0)).current;
+  const isMounted = useRef<boolean>(true);
 
   // ---------- Toast ----------
   const showToast = (msg: string, kind: 'info' | 'error' | 'success' = 'info') => {
+    if (!isMounted.current) return;
     setToast({ msg, kind });
     Animated.sequence([
       Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       Animated.delay(1800),
       Animated.timing(toastAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
-    ]).start(() => setToast(null));
+    ]).start(() => {
+      if (isMounted.current) {
+        setToast(null);
+      }
+    });
   };
 
   // ---------- Send flight data ----------
   const sendFlightDataRaw = (throttle: number, steering: number, takeoff: number) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const message = `${throttle},${steering},${takeoff}`;
     try {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const message = `${throttle},${steering},${takeoff}`;
       ws.send(message);
       lastSendTime.current = Date.now();
     } catch (err) {
       console.error('WS send error:', err);
+      // Don't crash the app on WebSocket errors
     }
   };
 
@@ -341,33 +348,38 @@ const DroneController: React.FC = () => {
   };
 
   const startGyroscope = () => {
-    stopGyroscope();
-    Gyroscope.setUpdateInterval(settingsRef.current.sensorUpdateRate);
-    gyroSubscription.current = Gyroscope.addListener((data) => {
-      setGyroValue(data);
-      const s = settingsRef.current;
-      // Roll (X) drives steering. Positive = right, Negative = left.
-      let steeringValue = Math.round(data.x * s.gyroSensitivity);
-      steeringValue = Math.max(-100, Math.min(100, steeringValue));
-      if (Math.abs(steeringValue) < s.deadzone) steeringValue = 0;
+    try {
+      stopGyroscope();
+      Gyroscope.setUpdateInterval(settingsRef.current.sensorUpdateRate);
+      gyroSubscription.current = Gyroscope.addListener((data) => {
+        setGyroValue(data);
+        const s = settingsRef.current;
+        // Roll (X) drives steering. Positive = right, Negative = left.
+        let steeringValue = Math.round(data.x * s.gyroSensitivity);
+        steeringValue = Math.max(-100, Math.min(100, steeringValue));
+        if (Math.abs(steeringValue) < s.deadzone) steeringValue = 0;
 
-      // Smoothing buffer
-      gyroBufferRef.current.push(steeringValue);
-      if (gyroBufferRef.current.length > 4) gyroBufferRef.current.shift();
-      const smoothed = Math.round(
-        gyroBufferRef.current.reduce((a, b) => a + b, 0) / gyroBufferRef.current.length
-      );
+        // Smoothing buffer
+        gyroBufferRef.current.push(steeringValue);
+        if (gyroBufferRef.current.length > 4) gyroBufferRef.current.shift();
+        const smoothed = Math.round(
+          gyroBufferRef.current.reduce((a, b) => a + b, 0) / gyroBufferRef.current.length
+        );
 
-      const currentSteering = flightRef.current.steering;
-      if (Math.abs(smoothed - currentSteering) < s.tolerance) return;
+        const currentSteering = flightRef.current.steering;
+        if (Math.abs(smoothed - currentSteering) < s.tolerance) return;
 
-      // When drone is not armed, steering should be forced to 0
-      const armed = flightRef.current.takeoffButton === 1;
-      const safeSteering = armed ? smoothed : 0;
-      
-      setFlightState((prev) => ({ ...prev, steering: safeSteering }));
-      sendFlightData(flightRef.current.throttle, safeSteering, flightRef.current.takeoffButton);
-    });
+        // When drone is not armed, steering should be forced to 0
+        const armed = flightRef.current.takeoffButton === 1;
+        const safeSteering = armed ? smoothed : 0;
+
+        setFlightState((prev) => ({ ...prev, steering: safeSteering }));
+        sendFlightData(flightRef.current.throttle, safeSteering, flightRef.current.takeoffButton);
+      });
+    } catch (error) {
+      console.error('Failed to start gyroscope:', error);
+      showToast('Gyroscope not available', 'error');
+    }
   };
 
   // Restart gyro whenever mode/settings that affect it change while flying
@@ -399,7 +411,7 @@ const DroneController: React.FC = () => {
         setIsConnected(true);
         setConnectionStatus(`Connected · ${currentIP}:${settings.port}`);
         showToast('Connected to ESP32', 'success');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
         sendFlightDataRaw(0, 0, 0);
       };
       ws.onerror = () => {
@@ -425,6 +437,7 @@ const DroneController: React.FC = () => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      isMounted.current = false;
       if (wsRef.current) wsRef.current.close();
       stopGyroscope();
       if (returnListener.current) returnAnim.removeListener(returnListener.current);
@@ -446,6 +459,8 @@ const DroneController: React.FC = () => {
 
   // ---------- Armed pulse animation ----------
   useEffect(() => {
+    if (!isMounted.current) return;
+
     if (flightState.takeoffButton === 1) {
       const loop = Animated.loop(
         Animated.sequence([
@@ -454,26 +469,32 @@ const DroneController: React.FC = () => {
         ])
       );
       loop.start();
-      return () => loop.stop();
+      return () => {
+        if (isMounted.current) {
+          loop.stop();
+        }
+      };
     }
     armedPulse.setValue(0);
   }, [flightState.takeoffButton, armedPulse]);
 
   // ---------- Handlers ----------
   const handleThrottleChange = (value: number) => {
+    if (!isMounted.current) return;
+
     const newThrottle = Math.round(value);
-    
+
     // Add throttle deadzone - ignore very low values (below 15)
     // This prevents motors from trying to run at too low speeds
     const throttleDeadzone = 15;
     const effectiveThrottle = newThrottle < throttleDeadzone ? 0 : newThrottle;
-    
+
     // When drone is not armed, throttle should be forced to 0
     const armed = flightRef.current.takeoffButton === 1;
     const safeThrottle = armed ? effectiveThrottle : 0;
-    
+
     setFlightState((prev) => ({ ...prev, throttle: safeThrottle }));
-    
+
     // Only send throttle data when armed, otherwise send 0
     sendFlightData(safeThrottle, flightRef.current.steering, flightRef.current.takeoffButton);
   };
@@ -481,18 +502,18 @@ const DroneController: React.FC = () => {
   const handleTakeoffPress = () => {
     const next = flightRef.current.takeoffButton === 0 ? 1 : 0;
     const armed = next === 1;
-    
+
     // When arming, ensure throttle is 0 for safety
     // When disarming, also set throttle to 0
     const safeThrottle = 0;
     const safeSteering = 0;
-    
+
     setFlightState((prev) => ({ ...prev, throttle: safeThrottle, steering: safeSteering, takeoffButton: next }));
-    
+
     // Send zero values when arming/disarming for safety
     sendFlightDataRaw(safeThrottle, safeSteering, next);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
+
     // Show toast for arming status
     if (armed) {
       showToast('Drone armed - Throttle unlocked', 'success');
@@ -502,7 +523,7 @@ const DroneController: React.FC = () => {
   };
 
   const handleEmergencyStop = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => { });
     setFlightState({ throttle: 0, steering: 0, takeoffButton: 0 });
     sendFlightDataRaw(0, 0, 0);
     setConnectionStatus('Emergency Stop · Power Cut');
@@ -513,13 +534,13 @@ const DroneController: React.FC = () => {
   const handleSteeringChange = (v: number) => {
     // cancel any return animation
     returnAnim.stopAnimation();
-    
+
     // When drone is not armed, steering should be forced to 0
     const armed = flightRef.current.takeoffButton === 1;
     const safeSteering = armed ? v : 0;
-    
+
     setFlightState((prev) => ({ ...prev, steering: safeSteering }));
-    
+
     // Only send steering data when armed, otherwise send 0
     sendFlightData(flightRef.current.throttle, safeSteering, flightRef.current.takeoffButton);
   };
@@ -531,11 +552,11 @@ const DroneController: React.FC = () => {
     if (returnListener.current) returnAnim.removeListener(returnListener.current);
     returnListener.current = returnAnim.addListener(({ value }) => {
       const rounded = Math.round(value);
-      
+
       // When drone is not armed, steering should be forced to 0
       const armed = flightRef.current.takeoffButton === 1;
       const safeSteering = armed ? rounded : 0;
-      
+
       setFlightState((prev) =>
         prev.steering === safeSteering ? prev : { ...prev, steering: safeSteering }
       );
@@ -1032,8 +1053,8 @@ const DroneController: React.FC = () => {
                 toast.kind === 'error'
                   ? C.danger
                   : toast.kind === 'success'
-                  ? C.success
-                  : C.accent,
+                    ? C.success
+                    : C.accent,
             },
           ]}
           testID="toast"
@@ -1043,16 +1064,16 @@ const DroneController: React.FC = () => {
               toast.kind === 'error'
                 ? 'alert-circle'
                 : toast.kind === 'success'
-                ? 'checkmark-circle'
-                : 'information-circle'
+                  ? 'checkmark-circle'
+                  : 'information-circle'
             }
             size={16}
             color={
               toast.kind === 'error'
                 ? C.danger
                 : toast.kind === 'success'
-                ? C.success
-                : C.accent
+                  ? C.success
+                  : C.accent
             }
           />
           <Text style={styles.toastText}>{toast.msg}</Text>
